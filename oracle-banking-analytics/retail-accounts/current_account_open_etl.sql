@@ -1,7 +1,7 @@
 /*
   current_account_open_etl.sql
   ─────────────────────────────────────────────────────────────────────────────
-  Engine  : Oracle SQL (via Oracle Database Link @ehd_prod)
+  Engine  : Oracle SQL (via Oracle Database Link @prod)
   Platform: Oracle Financial Services Analytical Applications (OFSAA)
   Domain  : Retail Banking — CRM Operations Event Feed
   Company : GBC (large Russian bank)
@@ -37,7 +37,7 @@
     passive_deal → MA_product → product_star (for product name hierarchy)
     office → drc_office_star (branch code and address from reporting dimension)
 
-  KEY ORACLE TECHNIQUE — database links (@ehd_prod)
+  KEY ORACLE TECHNIQUE — database links (@prod)
   ───────────────────────────────────────────────────
   All OFSAAIATOM and DTO tables are queried via Oracle DB link to the
   production OFSAA schema. This pattern is common in banking ETL where the
@@ -120,43 +120,43 @@ SELECT /*+ parallel(4) */
     '0'                                                  AS ATM_ID,
     UPPER(tbl_office.ag_addr)                            AS ADDINFO_DESC
 
-FROM ofsaaiatom.stg_deals_opn@ehd_prod t1
+FROM ofsaaiatom.stg_deals_opn@prod t1
 
 -- Deal metadata
-LEFT JOIN OFSAAIATOM.STG_DEAL_TYPES_OPN@ehd_prod    t2  ON t2.id = t1.deal_type_id
-LEFT JOIN OFSAAIATOM.STG_PRODUCTS_OPN@ehd_prod       t3  ON t1.product_id = t3.id
-LEFT JOIN OFSAAIATOM.STG_PRODUCT_GROUPS_OPN@ehd_prod t4  ON t3.product_group = t4.id
+LEFT JOIN OFSAAIATOM.STG_DEAL_TYPES_OPN@prod    t2  ON t2.id = t1.deal_type_id
+LEFT JOIN OFSAAIATOM.STG_PRODUCTS_OPN@prod       t3  ON t1.product_id = t3.id
+LEFT JOIN OFSAAIATOM.STG_PRODUCT_GROUPS_OPN@prod t4  ON t3.product_group = t4.id
 
 -- Customer: unified → physical person (name, masked)
-LEFT JOIN OFSAAIATOM.HFCDI_CUSTOMER_UNITED@ehd_prod  t5  ON t1.cust_id = t5.id AND t5.fl_del = '0'
-LEFT JOIN OFSAAIATOM.HFCDI_CUSTOMER_PHY@ehd_prod     t6  ON t5.hid_party = t6.hid_party AND t6.is_deleted = 0
+LEFT JOIN OFSAAIATOM.HFCDI_CUSTOMER_UNITED@prod  t5  ON t1.cust_id = t5.id AND t5.fl_del = '0'
+LEFT JOIN OFSAAIATOM.HFCDI_CUSTOMER_PHY@prod     t6  ON t5.hid_party = t6.hid_party AND t6.is_deleted = 0
 
 -- Account linked to deal
-LEFT JOIN OFSAAIATOM.STG_RL_ACCOUNT_DEALS@ehd_prod   t7  ON t1.id = t7.deal_id
-LEFT JOIN ofsaaiatom.stg_accounts_opn@ehd_prod        t8  ON t7.account_id = t8.id AND t8.source_id IN ('3C', 'NOM')
+LEFT JOIN OFSAAIATOM.STG_RL_ACCOUNT_DEALS@prod   t7  ON t1.id = t7.deal_id
+LEFT JOIN ofsaaiatom.stg_accounts_opn@prod        t8  ON t7.account_id = t8.id AND t8.source_id IN ('3C', 'NOM')
 
 -- Primary contact phone
-LEFT JOIN OFSAAIATOM.HFCDI_PHONE@ehd_prod             t9  ON t5.hid_party = t9.hid_party
+LEFT JOIN OFSAAIATOM.HFCDI_PHONE@prod             t9  ON t5.hid_party = t9.hid_party
                                                           AND t9.is_deleted = 0 AND t9.primary_flag = 1
 
 -- Party type code (individual / corporate)
 LEFT JOIN grset_partytype_code                        t10 ON t5.party_type = t10.source_name
 
 -- Operator valid on account open date (time-valid join)
-LEFT JOIN OFSAAIATOM.STG_DEAL_OPERATORS_OPN@ehd_prod tbl_rl_deal_oper
+LEFT JOIN OFSAAIATOM.STG_DEAL_OPERATORS_OPN@prod tbl_rl_deal_oper
     ON t1.id = tbl_rl_deal_oper.deal_id
    AND t8.open_dt BETWEEN tbl_rl_deal_oper.d_open AND tbl_rl_deal_oper.d_close
    AND tbl_rl_deal_oper.source_id IN ('3C', 'NOM')
-LEFT JOIN ofsaaiatom.stg_operators_opn@ehd_prod tbl_oper
+LEFT JOIN ofsaaiatom.stg_operators_opn@prod tbl_oper
     ON tbl_rl_deal_oper.operator_id = tbl_oper.id AND tbl_oper.source_id IN ('3C', 'NOM')
 
 -- Office resolution: deal → contract → passive_deal → office → org_structure
-LEFT JOIN ofsaaiatom.stg_deal_contract_opn@ehd_prod tbl_deal_contr ON t1.id = tbl_deal_contr.deal_id
-LEFT JOIN OFSAAIATOM.STG_PASSIVEDEAL_OFFICES_OPN@ehd_prod tbl_pass_off
+LEFT JOIN ofsaaiatom.stg_deal_contract_opn@prod tbl_deal_contr ON t1.id = tbl_deal_contr.deal_id
+LEFT JOIN OFSAAIATOM.STG_PASSIVEDEAL_OFFICES_OPN@prod tbl_pass_off
     ON tbl_deal_contr.passivedeal_id = tbl_pass_off.passivedeal_id
    AND t8.open_dt BETWEEN tbl_pass_off.dt_bgn AND tbl_pass_off.dt_end
    AND tbl_pass_off.source_id IN ('3C', 'NOM')
-LEFT JOIN OFSAAIATOM.STG_OFFICES_OPN@ehd_prod tbl_office
+LEFT JOIN OFSAAIATOM.STG_OFFICES_OPN@prod tbl_office
     ON tbl_office.id = tbl_pass_off.ag_id AND tbl_office.source_id IN ('3C', 'NOM')
 
 -- Operation code from product group → lookup → operations catalogue
@@ -169,15 +169,15 @@ LEFT JOIN GRSET_CURRENTACC_CHANNEL  curr_chann     ON tbl_oper.descr = curr_chan
 LEFT JOIN grset_operation_channel   oper_chann     ON oper_chann.operation_channel_code = curr_chann.target
 
 -- Product name hierarchy from OFSAA product star
-LEFT JOIN dto.agg_ma_product@ehd_prod ma_product
+LEFT JOIN dto.agg_ma_product@prod ma_product
     ON tbl_deal_contr.passivedeal_id = ma_product.contract_id
    AND ma_product.account_id = t7.account_id
    AND t1.deal_fd BETWEEN ma_product.date_from AND ma_product.date_to
    AND ma_product.contract_type = 'P'
-LEFT JOIN dto.drc_product_star@ehd_prod pr_star ON ma_product.product_group_id = pr_star.group3_id
+LEFT JOIN dto.drc_product_star@prod pr_star ON ma_product.product_group_id = pr_star.group3_id
 
 -- Branch reporting dimension
-LEFT JOIN dto.drc_office_star@ehd_prod drc_off ON tbl_office.mngm_office_id = drc_off.id
+LEFT JOIN dto.drc_office_star@prod drc_off ON tbl_office.mngm_office_id = drc_off.id
 
 WHERE
     t1.source_id IN ('3C', 'NOM')

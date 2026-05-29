@@ -1,7 +1,7 @@
 /*
   early_repayment_event_etl.sql
   ─────────────────────────────────────────────────────────────────────────────
-  Engine  : Oracle SQL (WITH clause / CTE + DB Link @ehd_prod)
+  Engine  : Oracle SQL (WITH clause / CTE + DB Link @prod)
   Platform: Oracle Financial Services Analytical Applications (OFSAA)
   Domain  : Retail Banking — Loan Operations (Early Repayment Events)
   Company : GBC (large Russian bank)
@@ -232,19 +232,19 @@ LEFT JOIN acc_mig_1
    AND acc_seed.dt           = acc_mig_1.dt
 
 -- Branch info
-LEFT JOIN OFSAAIATOM.STG_OFFICES_OPN@ehd_prod tbl_office
+LEFT JOIN OFSAAIATOM.STG_OFFICES_OPN@prod tbl_office
     ON acc_seed.ag_id = tbl_office.id AND tbl_office.source_id = '3C'
-LEFT JOIN dto.drc_office_star@ehd_prod off_st
+LEFT JOIN dto.drc_office_star@prod off_st
     ON tbl_office.mngm_office_id = off_st.id
 
 -- Operator (employee who processed the repayment)
-LEFT JOIN ofsaaiatom.stg_operators_opn@ehd_prod tbl_oper
+LEFT JOIN ofsaaiatom.stg_operators_opn@prod tbl_oper
     ON acc_seed.operator_cre_id = tbl_oper.id AND tbl_oper.source_id = '3C'
 
 -- Customer identity (unified record → physical person)
-LEFT JOIN OFSAAIATOM.HFCDI_CUSTOMER_UNITED@ehd_prod custun
+LEFT JOIN OFSAAIATOM.HFCDI_CUSTOMER_UNITED@prod custun
     ON acc_seed.db_cust_id = custun.id AND custun.fl_del = '0'
-LEFT JOIN OFSAAIATOM.HFCDI_CUSTOMER_PHY@ehd_prod tbl_phy
+LEFT JOIN OFSAAIATOM.HFCDI_CUSTOMER_PHY@prod tbl_phy
     ON custun.hid_party = tbl_phy.hid_party AND tbl_phy.is_deleted = 0
 
 -- Latest primary mobile phone (deduplicated via CTE)
@@ -252,12 +252,12 @@ LEFT JOIN tel_num
     ON custun.hid_party = tel_num.hid_party AND tel_num.rn = 1
 
 -- Product hierarchy (time-valid: event date must fall within product validity)
-LEFT JOIN dto.agg_ma_product@ehd_prod ma_product
+LEFT JOIN dto.agg_ma_product@prod ma_product
     ON  acc_seed.contract_id       = ma_product.contract_id
     AND ma_product.account_id      = acc_mig_1.account_id
     AND acc_seed.dt BETWEEN ma_product.date_from AND ma_product.date_to
     AND ma_product.contract_type   = 'A'
-LEFT JOIN dto.drc_product_star@ehd_prod pr_star
+LEFT JOIN dto.drc_product_star@prod pr_star
     ON ma_product.product_group_id = pr_star.group3_id
    AND acc_seed.dt BETWEEN pr_star.date_from AND pr_star.date_to
 
@@ -267,7 +267,7 @@ LEFT JOIN ost_contr
    AND acc_seed.dt         = ost_contr.dt
 
 -- Currency code resolution (internal Oracle code → ISO)
-LEFT JOIN ofsaaiatom.stg_accounts_opn@ehd_prod acc
+LEFT JOIN ofsaaiatom.stg_accounts_opn@prod acc
     ON acc_seed.db_accnt_id = acc.id
 LEFT JOIN grset_currency
     ON acc.crnc = grset_currency.source_code

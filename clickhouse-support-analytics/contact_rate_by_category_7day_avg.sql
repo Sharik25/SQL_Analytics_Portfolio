@@ -36,7 +36,7 @@
     Approximate distinct count (HyperLogLog). Used instead of COUNT(DISTINCT)
     for performance on billion-row event tables. Acceptable precision for CR.
 
-  dictGetInt64OrDefault('family', 'parent_ivi_id', ...)
+  dictGetInt64OrDefault('family', 'parent_id', ...)
     Dictionary lookup: resolves child account IDs to the household parent ID,
     ensuring a family sharing one subscription counts as 1 unique user, not N.
 
@@ -73,20 +73,20 @@ FROM (
         rocket_date + arrayJoin(range(7))                             AS date_events,
         uniq(
             dictGetInt64OrDefault(
-                'family', 'parent_ivi_id',
+                'family', 'parent_id',
                 toUInt64(ivi_id), toInt64(ivi_id)
             )
         )                                                             AS uniqs,
         uniq(
             toString(
-                dictGetInt64OrDefault('family','parent_ivi_id',
-                    toUInt64(ivi_id), toInt64(ivi_id))
-            ) || ',' || toString(rocket_date)
+                dictGetInt64OrDefault('family','parent_id',
+                    toUInt64(i_id), toInt64(i_id))
+            ) || ',' || toString(rock_date)
         )                                                             AS uniqdays,
         (uniqdays / 7)                                                AS avg_mov_7_events
-    FROM groot3.events
+    FROM gt3.events
     WHERE
-        name         = 'page_impression'
+        name         = 'xxxxxx'
         AND country  = 'Russia'
         -- 14-day warm-up so that the first reported date has a full 7-day window
         AND rocket_date >= toDate('2019-12-25') - 14

@@ -72,7 +72,7 @@ FROM (
         toDate(dateAdd(hour, -3, interaction_date))                   AS true_interaction_date,
         service_type,
         service_folder_2
-    FROM `external`.itsm_service
+    FROM `exter`.itsm_service
 
     UNION ALL
 
@@ -82,7 +82,7 @@ FROM (
         toDate(dateAdd(hour, 3, p.create_date))                       AS true_interaction_date,
         argMax(category_1,  p.last_modified_date)                     AS service_type,
         argMax(category_2,  p.last_modified_date)                     AS service_folder_2
-    FROM `external`.pyrus AS p
+    FROM `ext`.pyrus AS p
     GROUP BY id, toDate(dateAdd(hour, 3, p.create_date))
 )
 GROUP BY service_type, service_folder_2

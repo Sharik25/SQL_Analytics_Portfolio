@@ -50,6 +50,32 @@ sql-analytics-portfolio/
 
 ---
 
+### `profit_analysis/new_products_profitability.sql`
+
+**What it solves:** Identifies newly profitable products — ASINs that had zero cumulative gross margin in the prior 6 months (still in the launch / investment phase) but turned profitable in a target reporting period. These products have just crossed break-even and warrant increased investment.
+
+**Techniques used:**
+
+- **SUM() OVER (PARTITION BY asin) for conditional filtering** — computes the rolling 6-month total per ASIN as a window aggregate without collapsing the result set. Filtering on `sum_over = 0` then isolates the "zero-profit" ASIN set without a GROUP BY, preserving row-level detail for the subsequent join. This avoids a correlated subquery or a two-pass approach.
+- **LEFT JOIN as existence check** — the join between current-period profitable ASINs and the prior-window zero-profit set acts as a semi-join; `COALESCE(joined_asin, 'None') != 'None'` filters to the overlap.
+- **Cross-year window for Canada** — the CA prior window spans a year boundary (Sep–Dec 2023 + Jan–Feb 2024), requiring a `UNION ALL` of two separate date-range filters inside the window CTE.
+
+---
+
+### `profit_analysis/master_pnl_engine_us.sql`
+
+**What it solves:** The single most complex query in this repository. Produces a complete monthly P&L row per ASIN combining every revenue and cost component: sales revenue, 6 fee types, 20+ refund line items, returns, removals, reimbursements (two sources), inventory discrepancies, COGS from supplier orders, and cross-marketplace gross sales for CA and MX (USD-equivalent). Used as the source-of-truth table for all downstream profitability reports.
+
+**Techniques used:**
+
+- **Multi-index CROSS JOIN spine** — generates the complete `(asin × year × month)` grid by cross-joining the SKU/ASIN dimension with a `VALUES`-based year table and a `VALUES`-based month table. This ensures every ASIN appears for every calendar period even with zero activity, preventing silent gaps in period-over-period comparisons.
+- **Three-way INNER JOIN for payment accuracy** — `payments_order_dates` INNER JOIN `payments_order_quantities` INNER JOIN `payments_reporting_orders_usd_us_transpose` all on `(order_id, sku)`. The INNER JOIN (not LEFT) ensures quantity and fee columns come from the same matched order event, preventing cross-contamination in the aggregate.
+- **Pre-pivoted transpose table** — Amazon payment reports are row-per-fee-type. A pre-computed Athena CTAS (`payments_reporting_orders_usd_us_transpose`) pivots 27 fee types into columns. This query then sums each with `COALESCE`, producing clean monthly totals without dynamic SQL.
+- **10+ parallel LEFT JOINs onto the spine** — all data sources (returns, removals, reimbursements ×2, payments, refunds, discrepancies, COGS, CA data, MX data) are LEFT JOINed to the spine, with all NULL values coalesced to 0. This design ensures missing data components never suppress an ASIN from the output.
+- **COALESCE-heavy defensive coding** — every metric uses `COALESCE(..., 0)` to handle periods where a component has no data, keeping arithmetic safe throughout the downstream P&L calculation.
+
+---
+
 ### `reimbursements/destroyed_inventory_reimbursement_finder.sql`
 
 **What it solves:** Amazon destroys FBA inventory at its warehouses and is obligated to reimburse sellers — but only if the seller files a case. This query automates the identification of destroyed units that have not yet received a reimbursement, feeding an automated case-filing workflow before Amazon's 18-month claim window closes.
@@ -138,34 +164,6 @@ sql-analytics-portfolio/
 - **SPLIT_PART brand join** — brand dimension joined on the extracted SKU prefix for team-level rollup.
 - **UNION ALL for US + CA** with a `marketplace` label column for BI tool filtering.
 
----
-
-### `profit_analysis/new_products_profitability.sql`
-
-**What it solves:** Identifies newly profitable products — ASINs that had zero cumulative gross margin in the prior 6 months (still in the launch / investment phase) but turned profitable in a target reporting period. These products have just crossed break-even and warrant increased investment.
-
-**Techniques used:**
-
-- **SUM() OVER (PARTITION BY asin) for conditional filtering** — computes the rolling 6-month total per ASIN as a window aggregate without collapsing the result set. Filtering on `sum_over = 0` then isolates the "zero-profit" ASIN set without a GROUP BY, preserving row-level detail for the subsequent join. This avoids a correlated subquery or a two-pass approach.
-- **LEFT JOIN as existence check** — the join between current-period profitable ASINs and the prior-window zero-profit set acts as a semi-join; `COALESCE(joined_asin, 'None') != 'None'` filters to the overlap.
-- **Cross-year window for Canada** — the CA prior window spans a year boundary (Sep–Dec 2023 + Jan–Feb 2024), requiring a `UNION ALL` of two separate date-range filters inside the window CTE.
-
----
-
-### `profit_analysis/master_pnl_engine_us.sql`
-
-**What it solves:** The single most complex query in this repository. Produces a complete monthly P&L row per ASIN combining every revenue and cost component: sales revenue, 6 fee types, 20+ refund line items, returns, removals, reimbursements (two sources), inventory discrepancies, COGS from supplier orders, and cross-marketplace gross sales for CA and MX (USD-equivalent). Used as the source-of-truth table for all downstream profitability reports.
-
-**Techniques used:**
-
-- **Multi-index CROSS JOIN spine** — generates the complete `(asin × year × month)` grid by cross-joining the SKU/ASIN dimension with a `VALUES`-based year table and a `VALUES`-based month table. This ensures every ASIN appears for every calendar period even with zero activity, preventing silent gaps in period-over-period comparisons.
-- **Three-way INNER JOIN for payment accuracy** — `payments_order_dates` INNER JOIN `payments_order_quantities` INNER JOIN `payments_reporting_orders_usd_us_transpose` all on `(order_id, sku)`. The INNER JOIN (not LEFT) ensures quantity and fee columns come from the same matched order event, preventing cross-contamination in the aggregate.
-- **Pre-pivoted transpose table** — Amazon payment reports are row-per-fee-type. A pre-computed Athena CTAS (`payments_reporting_orders_usd_us_transpose`) pivots 27 fee types into columns. This query then sums each with `COALESCE`, producing clean monthly totals without dynamic SQL.
-- **10+ parallel LEFT JOINs onto the spine** — all data sources (returns, removals, reimbursements ×2, payments, refunds, discrepancies, COGS, CA data, MX data) are LEFT JOINed to the spine, with all NULL values coalesced to 0. This design ensures missing data components never suppress an ASIN from the output.
-- **COALESCE-heavy defensive coding** — every metric uses `COALESCE(..., 0)` to handle periods where a component has no data, keeping arithmetic safe throughout the downstream P&L calculation.
-
----
-
 ## Part 2 — ClickHouse: Support Analytics at ivi.ru
 
 **Context:** ivi.ru is Russia's largest video-on-demand platform. The support analytics stack runs on ClickHouse, querying billions of rows of behavioural events and support ticket data. The two queries below were used for daily operational dashboards and monthly executive reporting.
@@ -180,7 +178,7 @@ sql-analytics-portfolio/
 
 - **arrayJoin(range(7))** — ClickHouse's native sliding-window technique. Exploding each date into 7 rows assigns each ticket or user-day to the rolling windows it belongs to, enabling a 7-day moving average without a self-join or window function frame.
 - **uniq()** — ClickHouse's approximate distinct count (HyperLogLog). Chosen over `COUNT(DISTINCT)` for performance on the billion-row `groot3.events` table. The ~2% error margin is acceptable for a rate metric.
-- **dictGetInt64OrDefault('family', 'parent_ivi_id', ...)** — dictionary join that resolves child account IDs to the household parent, so a family sharing a subscription counts as 1 DAU rather than N.
+- **dictGetInt64OrDefault('family', 'parent_id', ...)** — dictionary join that resolves child account IDs to the household parent, so a family sharing a subscription counts as 1 DAU rather than N.
 - **argMax(value, timestamp)** — returns the most-recently-updated field value per Pyrus ticket. Pyrus tickets are mutable (categories and channels can change); `argMax` ensures the final state is used.
 - **UNION ALL of ITSM + Pyrus** — two separate ticket systems are merged into a unified ticket base before aggregation, with timezone correction applied to each (`dateAdd(hour, -3/+3)`).
 - **INNER JOIN on date** — events (DAU) and tickets are joined on the exploded `date_events = date_itsm` key, ensuring the CR is always computed against the correct rolling window.
@@ -199,7 +197,7 @@ sql-analytics-portfolio/
 
 ## Part 3 — Oracle SQL: Banking CRM & Loan Operations ETL at GBC
 
-**Context:** GBC is a large Russian retail bank. The analytics stack is built on Oracle Financial Services Analytical Applications (OFSAA), a standard enterprise banking data platform. All source data is queried via Oracle database links (`@ehd_prod`) connecting to the production OFSAA schema. The queries build standardised CRM event rows that feed a bank-wide operations analytics platform tracking process performance, channel distribution, and product coverage.
+**Context:** The analytics stack is built on Oracle Financial Services Analytical Applications (OFSAA), a standard enterprise banking data platform. All source data is queried via Oracle database links (`@ehd_prod`) connecting to the production OFSAA schema. The queries build standardised CRM event rows that feed a bank-wide operations analytics platform tracking process performance, channel distribution, and product coverage.
 
 ---
 
